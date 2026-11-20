@@ -4,8 +4,8 @@
 from typing import Optional
 
 APP_NAME = "迈从电量托盘"
-APP_TITLE = "迈从 G3 V2 电量托盘"
-MUTEX_NAME = "Global\\MCHOSE_G3V2_BATTERY_TRAY"
+APP_TITLE = "迈从电量托盘"
+MUTEX_NAME = "Global\\MCHOSE_BATTERY_TRAY"
 SHORTCUT_NAME = "迈从电量托盘.lnk"
 
 # 托盘图标与超采样参数

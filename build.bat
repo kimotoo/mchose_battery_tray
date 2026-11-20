@@ -13,7 +13,7 @@ if errorlevel 1 (
 
 echo [2/2] 正在使用 PyInstaller 打包单文件 EXE...
 python -m PyInstaller --noconfirm --clean --noconsole --onefile ^
-  --name "迈从G3V2电量托盘" ^
+  --name "迈从电量托盘" ^
   --icon "assets\app.ico" ^
   --version-file "version_info.txt" ^
   --collect-all hidapi ^
@@ -27,5 +27,5 @@ if errorlevel 1 (
 )
 
 echo.
-echo 打包成功！生成文件位于: %~dp0dist\迈从G3V2电量托盘.exe
+echo 打包成功！生成文件位于: %~dp0dist\迈从电量托盘.exe
 pause

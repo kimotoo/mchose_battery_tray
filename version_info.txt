@@ -14,12 +14,12 @@ VSVersionInfo(
       StringTable(
         '080404b0',
         [StringStruct('CompanyName', ''),
-         StringStruct('FileDescription', '迈从 G3 V2 电量托盘'),
+         StringStruct('FileDescription', '迈从电量托盘'),
          StringStruct('FileVersion', '1.0.0.0'),
-         StringStruct('InternalName', '迈从 G3 V2 电量托盘'),
+         StringStruct('InternalName', '迈从电量托盘'),
          StringStruct('LegalCopyright', ''),
-         StringStruct('OriginalFilename', '迈从G3V2电量托盘.exe'),
-         StringStruct('ProductName', '迈从 G3 V2 电量托盘'),
+         StringStruct('OriginalFilename', '迈从电量托盘.exe'),
+         StringStruct('ProductName', '迈从电量托盘'),
          StringStruct('ProductVersion', '1.0.0.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])

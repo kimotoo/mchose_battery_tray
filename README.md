@@ -49,7 +49,7 @@
      ```bash
      python mchose_battery.py
      ```
-   - 一键测试并打包（生成 `dist\迈从G3V2电量托盘.exe`）：
+   - 一键测试并打包（生成 `dist\迈从电量托盘.exe`）：
      ```bat
      build.bat
      ```

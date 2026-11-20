@@ -137,9 +137,9 @@ class TestAutostartAndTray(unittest.TestCase):
             self.assertEqual(workdir, entry.resolve().parent)
 
         with patch.object(sys, "frozen", True, create=True):
-            with patch.object(sys, "executable", "D:/tools/迈从G3V2电量托盘.exe"):
+            with patch.object(sys, "executable", "D:/tools/迈从电量托盘.exe"):
                 target, args, workdir = autostart._resolve_launch_target(entry)
-                self.assertEqual(target, Path("D:/tools/迈从G3V2电量托盘.exe").resolve())
+                self.assertEqual(target, Path("D:/tools/迈从电量托盘.exe").resolve())
                 self.assertEqual(args, "")
                 self.assertEqual(workdir, Path("D:/tools").resolve())
 
