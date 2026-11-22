@@ -369,7 +369,7 @@ class TestG3ClassicAndA7Protocols(unittest.TestCase):
             "A7e Pro",
         )
 
-        # 验证默认注册管理器包含 G3 V2、G3 原始款、Classic、Modern、A5 Pro (0x2023)、A5 Compx (0x3554) 以及虚拟键盘
+        # 验证默认注册管理器包含 G3 V2、G3 原始款、Classic、Modern、A5 Pro (0x2023)、A5 Compx (0x3554)、ATK X1 (0x373B) 以及虚拟键盘
         mgr = create_default_manager(enumerate_fn=lambda: [])
         driver_ids = [d.driver_id for d in mgr._drivers[DeviceSlot.MOUSE]]
         self.assertEqual(
@@ -381,6 +381,7 @@ class TestG3ClassicAndA7Protocols(unittest.TestCase):
                 "mchose_modern",
                 "mchose_a5_legacy",
                 "mchose_a5_compx",
+                "atk_x1",
             ],
         )
         self.assertIn(0x0070, MchoseCatalog.CLASSIC_MODELS)

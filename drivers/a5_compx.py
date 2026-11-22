@@ -82,13 +82,10 @@ class MchoseA5CompxProtocol:
         return True, raw_percent, charging, voltage_mv
 
 
-class MchoseA5CompxDriver(BaseDeviceDriver):
-    """迈从 A5 / A5 Pro Compx 方案（VID=0x3554）鼠标驱动。"""
+class CompxBatteryDriverBase(BaseDeviceDriver):
+    """基于 Compx 17 字节 Report 0x08/Cmd 0x04 协议的鼠标驱动基类。"""
 
     slot = DeviceSlot.MOUSE
-    driver_id = "mchose_a5_compx"
-    display_name = "A5 / A5 Pro"
-    priority = 19
     is_virtual = False
 
     def __init__(
@@ -101,33 +98,19 @@ class MchoseA5CompxDriver(BaseDeviceDriver):
 
     @classmethod
     def is_supported_device(cls, vid: int, pid: int, product_string: str = "") -> bool:
-        if vid != VID_COMPX:
-            return False
-        if pid in COMPX_A5_WIRED_PIDS or pid in COMPX_A5_WIRELESS_PIDS:
-            return True
-        upper = (product_string or "").upper()
-        return "MCHOSE" in upper and "A5" in upper
+        raise NotImplementedError
+
+    @classmethod
+    def _is_wired_target(cls, target: Dict[str, Any]) -> bool:
+        return False
 
     @classmethod
     def _resolve_model_name(cls, target: Dict[str, Any]) -> str:
-        prod = str(target.get("product_string") or "").strip()
-        upper = prod.upper()
-        if "A5 PRO MAX" in upper:
-            return "A5 Pro Max"
-        if "A5 PRO" in upper:
-            return "A5 Pro"
-        if "A5" in upper:
-            return "A5 / A5 Pro"
-        pid = int(target.get("product_id") or 0)
-        return (
-            COMPX_A5_WIRED_PIDS.get(pid)
-            or COMPX_A5_WIRELESS_PIDS.get(pid)
-            or cls.display_name
-        )
+        return cls.display_name
 
     @classmethod
     def find_targets(cls, hid_devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """筛选 0x3554 的 0xFF02 控制接口，按有线优先于无线及 usage==0x0002 排序。"""
+        """筛选 0xFF02 控制接口，按有线优先于无线及 usage==0x0002 排序。"""
         wired_pref: List[Dict[str, Any]] = []
         wired_other: List[Dict[str, Any]] = []
         wireless_pref: List[Dict[str, Any]] = []
@@ -142,7 +125,7 @@ class MchoseA5CompxDriver(BaseDeviceDriver):
             if int(info.get("usage_page") or 0) != USAGE_PAGE_COMPX_VENDOR:
                 continue
 
-            is_wired = pid in COMPX_A5_WIRED_PIDS
+            is_wired = cls._is_wired_target(info)
             pref = int(info.get("usage") or 0) == USAGE_COMPX_VENDOR
             if is_wired:
                 (wired_pref if pref else wired_other).append(info)
@@ -194,7 +177,7 @@ class MchoseA5CompxDriver(BaseDeviceDriver):
         first = targets[0]
         usb_vid = int(first.get("vendor_id") or 0)
         usb_pid = int(first.get("product_id") or 0)
-        mode = ConnectionMode.USB if usb_pid in COMPX_A5_WIRED_PIDS else ConnectionMode.WIRELESS_24G
+        mode = ConnectionMode.USB if self._is_wired_target(first) else ConnectionMode.WIRELESS_24G
         model_name = self._resolve_model_name(first)
 
         saw_accessible = False
@@ -204,7 +187,7 @@ class MchoseA5CompxDriver(BaseDeviceDriver):
             saw_accessible = True
             t_vid = int(target.get("vendor_id") or 0)
             t_pid = int(target.get("product_id") or 0)
-            t_mode = ConnectionMode.USB if t_pid in COMPX_A5_WIRED_PIDS else ConnectionMode.WIRELESS_24G
+            t_mode = ConnectionMode.USB if self._is_wired_target(target) else ConnectionMode.WIRELESS_24G
             t_name = self._resolve_model_name(target)
             try:
                 parsed = self._query_target(target)
@@ -272,4 +255,42 @@ class MchoseA5CompxDriver(BaseDeviceDriver):
                 vid=usb_vid,
                 pid=usb_pid,
             ),
+        )
+
+
+class MchoseA5CompxDriver(CompxBatteryDriverBase):
+    """迈从 A5 / A5 Pro Compx 方案（VID=0x3554）鼠标驱动。"""
+
+    driver_id = "mchose_a5_compx"
+    display_name = "A5 / A5 Pro"
+    priority = 19
+
+    @classmethod
+    def is_supported_device(cls, vid: int, pid: int, product_string: str = "") -> bool:
+        if vid != VID_COMPX:
+            return False
+        if pid in COMPX_A5_WIRED_PIDS or pid in COMPX_A5_WIRELESS_PIDS:
+            return True
+        upper = (product_string or "").upper()
+        return "MCHOSE" in upper and "A5" in upper
+
+    @classmethod
+    def _is_wired_target(cls, target: Dict[str, Any]) -> bool:
+        return int(target.get("product_id") or 0) in COMPX_A5_WIRED_PIDS
+
+    @classmethod
+    def _resolve_model_name(cls, target: Dict[str, Any]) -> str:
+        prod = str(target.get("product_string") or "").strip()
+        upper = prod.upper()
+        if "A5 PRO MAX" in upper:
+            return "A5 Pro Max"
+        if "A5 PRO" in upper:
+            return "A5 Pro"
+        if "A5" in upper:
+            return "A5 / A5 Pro"
+        pid = int(target.get("product_id") or 0)
+        return (
+            COMPX_A5_WIRED_PIDS.get(pid)
+            or COMPX_A5_WIRELESS_PIDS.get(pid)
+            or cls.display_name
         )

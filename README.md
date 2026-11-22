@@ -9,7 +9,7 @@
 
 ## 已支持鼠标型号
 
-当前内置 6 套鼠标 HID 协议驱动（[驱动注册中心](drivers/registry.py)），按协议族支持以下型号（同时支持同系 2.4G 无线接收器自动识别）：
+当前内置 7 套鼠标 HID 协议驱动（[驱动注册中心](drivers/registry.py)），按协议族支持以下型号（同时支持同系 2.4G 无线接收器自动识别）：
 
 | 协议家族 | 适用型号 | 连接方式 / 关键标识 |
 | :--- | :--- | :--- |
@@ -19,6 +19,7 @@
 | **迈从新一代家族协议**<br>(`0x4D/0x0900`, [mchose_family.py](drivers/mchose_family.py)) | **G3 V3**、**A7 V3**、**A7 V3 Pro**、**A7 V3 Pro+**、**A7 V3 Ultra**、**A7 V3 Ultra+**、**A7 V3-X**、**A7 V3 Magnetic**<br>**A5 V3 Pro**、**A5 V3 Ultra+**、**A5 V3 Ultra+(3955)**<br>**K7 V2 Pro**、**K7 V2 Pro+**、**K7 V2 Ultra**、**K7 V2 Ultra+**<br>**K5 Pro**、**K5 Ultra**、**K5 V2**、**R7 Ultra**、**V7**、**V7 Pro** | 有线直连与 2.4G 接收器<br>VID `0x3837` |
 | **初代 A5 / AX5 协议**<br>(`0x2023`, [a5_legacy.py](drivers/a5_legacy.py)) | **A5 系列**（**A5 Pro**、**A5 Pro Max**）<br>**AX5 系列**（**AX5 Pro**、**AX5 Pro Max**） | 有线直连与 2.4G 接收器（VID `0x2023`） |
 | **A5 Compx 方案协议**<br>(`0x3554`, [a5_compx.py](drivers/a5_compx.py)) | **A5** / **A5 Pro**（Compx 方案） | 有线 `0xF551` 与 2.4G `0xF550`（VID `0x3554`） |
+| **ATK X1 Compx 方案协议**<br>(`0x373B`, [atk_x1.py](drivers/atk_x1.py)) | **ATK X1 Ultimate**（及同系 `0xFF02` 方案） | 8K 2.4G 接收器 `0x101B` / `0x11D9`（VID `0x373B`） |
 
 > 注：未列出 PID 的同系无线设备只要采用上述相同通信协议族（如官方 1K/4K/8K 接收器），亦可自动匹配识别；当同时接入有线与无线通道时优先读取有线直连状态。
 
