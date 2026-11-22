@@ -20,6 +20,7 @@
 | **初代 A5 / AX5 协议**<br>(`0x2023`, [a5_legacy.py](drivers/a5_legacy.py)) | **A5 系列**（**A5 Pro**、**A5 Pro Max**）<br>**AX5 系列**（**AX5 Pro**、**AX5 Pro Max**） | 有线直连与 2.4G 接收器（VID `0x2023`） |
 | **A5 Compx 方案协议**<br>(`0x3554`, [a5_compx.py](drivers/a5_compx.py)) | **A5** / **A5 Pro**（Compx 方案） | 有线 `0xF551` 与 2.4G `0xF550`（VID `0x3554`） |
 | **ATK X1 Compx 方案协议**<br>(`0x373B`, [atk_x1.py](drivers/atk_x1.py)) | **ATK X1 Ultimate**（及同系 `0xFF02` 方案） | 8K 2.4G 接收器 `0x101B` / `0x11D9`（VID `0x373B`） |
+| **Crush 80 三模键盘协议**<br>(`0x320F` / BLE, [crush80.py](drivers/crush80.py)) | **WOBKEY Crush 80**（RGB 旗舰版等） | USB `0x5055` / 2.4G `0x5088`（`0xFF1C`）<br>蓝牙 BLE（`245A:8276` Windows 电池服务） |
 
 > 注：未列出 PID 的同系无线设备只要采用上述相同通信协议族（如官方 1K/4K/8K 接收器），亦可自动匹配识别；当同时接入有线与无线通道时优先读取有线直连状态。
 
