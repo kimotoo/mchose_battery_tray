@@ -440,6 +440,40 @@ class TestAutostartAndTray(unittest.TestCase):
                 self.assertIs(swp_win11[0][1], HWND_TOP)
                 self.assertEqual(swp_win11[0][2:6], (2073, 0, 105, 48))
 
+        # 若 SetParent 返回 None（顶层窗首次挂载无旧父窗）且 LastError==0，仍应判定嵌入成功
+        host._embedded = False
+        host._parent_hwnd = None
+        with patch.object(host, "_detect_taskbar_handles", return_value=False), \
+                patch.object(host._u32, "GetWindowLongPtrW", return_value=WS_POPUP), \
+                patch.object(host._u32, "SetWindowLongPtrW", return_value=0), \
+                patch.object(host._u32, "SetWindowPos", return_value=True), \
+                patch.object(host._u32, "SetParent", return_value=None):
+            host._h_tray = 103
+            host._bar_hwnd = 888
+            host._attach_to_taskbar()
+            self.assertTrue(host._embedded)
+            self.assertEqual(host._parent_hwnd, 103)
+
+        # 若 SetParent 返回 None 且 LastError!=0（如权限/句柄拒绝），应回退为独立悬浮层
+        host._embedded = False
+        host._parent_hwnd = None
+
+        def fail_set_parent(_h, _p):
+            ctypes.set_last_error(5)
+            return None
+
+        with patch.object(host, "_detect_taskbar_handles", return_value=False), \
+                patch.object(host._u32, "GetWindowLongPtrW", return_value=WS_POPUP), \
+                patch.object(host._u32, "SetWindowLongPtrW", return_value=0), \
+                patch.object(host._u32, "SetWindowPos", return_value=True), \
+                patch.object(host._u32, "GetParent", return_value=0), \
+                patch.object(host._u32, "SetParent", side_effect=fail_set_parent):
+            host._h_tray = 103
+            host._bar_hwnd = 888
+            host._attach_to_taskbar()
+            self.assertFalse(host._embedded)
+            self.assertIsNone(host._parent_hwnd)
+
         # 当未找到任务栏时，兜底创建原生带 WS_EX_TOPMOST 的悬浮条窗口
         host._h_tray = None
         with patch.object(host, "_detect_taskbar_handles", return_value=False):
@@ -617,6 +651,19 @@ class TestAutostartAndTray(unittest.TestCase):
             # 3. 真正 Win10 经典任务栏（ReBar/MSTask 均可见且无 XAML Bridge）识别为经典模式
             bridge_state["hwnd"] = 0
             self.assertTrue(host._detect_taskbar_handles())
+
+            # 4. StartAllBack 等居中任务栏场景：ReBarWindow32 仅居中且与 TrayNotifyWnd 存在大段留白，应走 Shell_TrayWnd 挂载
+            rects[103] = RectTuple(0, 2158, 3840, 2254)
+            rects[101] = RectTuple(1300, 2158, 2188, 2254)
+            rects[102] = RectTuple(1300, 2158, 2188, 2254)
+            rects[104] = RectTuple(3264, 2158, 3840, 2254)
+            with patch.object(host, "_get_dpi_for_hwnd", return_value=192):
+                self.assertFalse(host._detect_taskbar_handles())
+
+            # 若 ReBarWindow32 贴近 TrayNotifyWnd（经典全宽 ReBar），则保持经典模式
+            rects[101] = RectTuple(120, 2158, 3260, 2254)
+            with patch.object(host, "_get_dpi_for_hwnd", return_value=192):
+                self.assertTrue(host._detect_taskbar_handles())
 
 
 if __name__ == "__main__":

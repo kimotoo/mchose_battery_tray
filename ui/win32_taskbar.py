@@ -1340,8 +1340,10 @@ class Win32TaskbarHost:
         self._h_mstask = h_mstask or None
         self._h_notify = h_notify or None
 
+        rc_tray = self._get_window_rect(h_tray)
         rc_rebar = self._get_window_rect(self._h_rebar)
         rc_mstask = self._get_window_rect(self._h_mstask)
+        rc_notify = self._get_window_rect(self._h_notify)
         is_classic = bool(
             self._h_rebar
             and self._h_mstask
@@ -1355,6 +1357,25 @@ class Win32TaskbarHost:
             and rc_mstask.width > 0
             and rc_mstask.height > 0
         )
+        # StartAllBack 居中任务栏等场景下，ReBarWindow32 仅包裹中间图标区而与托盘区之间存在大段留白，
+        # 此时应改走 Shell_TrayWnd 挂载，使组件紧贴 TrayNotifyWnd / TrafficMonitor 停靠
+        if (
+            is_classic
+            and rc_tray is not None
+            and rc_notify is not None
+            and rc_notify.width > 0
+            and rc_notify.height > 0
+        ):
+            scale = self._get_dpi_for_hwnd(h_tray) / 96.0
+            max_gap = max(48, round(48 * scale))
+            is_horizontal = rc_tray.width >= rc_tray.height
+            gap_to_notify = (
+                (rc_notify.left - rc_rebar.right)
+                if is_horizontal
+                else (rc_notify.top - rc_rebar.bottom)
+            )
+            if gap_to_notify > max_gap:
+                is_classic = False
         return is_classic
 
     def _embed_bar_in_parent(self, parent_hwnd: wintypes.HWND) -> bool:
@@ -1376,12 +1397,17 @@ class Win32TaskbarHost:
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             )
         style = self._u32.GetWindowLongPtrW(self._bar_hwnd, GWL_STYLE)
-        style = (style & ~WS_CHILD) | WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS
+        style = (style & ~WS_CHILD) | WS_POPUP | WS_CLIPSIBLINGS
         self._u32.SetWindowLongPtrW(self._bar_hwnd, GWL_STYLE, style)
+        # 对首次挂载的顶层窗口，SetParent 成功时返回旧父窗口 NULL(None)，需结合 LastError 判定
+        ctypes.set_last_error(0)
         prev_parent = self._u32.SetParent(self._bar_hwnd, parent_hwnd)
-        if prev_parent:
+        err = ctypes.get_last_error()
+        if prev_parent or err == 0:
             self._parent_hwnd = parent_hwnd
             self._embedded = True
+            # 跨进程 SetParent 到 explorer 任务栏容器时，直接走 LWA_COLORKEY + WM_PAINT 以确保 DWM 正常合成可见
+            self._use_colorkey_fallback = True
             return True
         return False
 
@@ -2092,23 +2118,14 @@ class Win32TaskbarHost:
             hbmp, w, h = create_hbitmap_from_rgba(self._g32, screen_dc, img)
             old_obj = self._g32.SelectObject(mem_dc, hbmp)
 
-            rc_self = self._get_window_rect(self._bar_hwnd)
-            if rc_self is not None:
-                if self._embedded and self._parent_hwnd:
-                    px, py, _, _ = self._screen_to_parent_client(rc_self)
-                else:
-                    px, py = rc_self.left, rc_self.top
-            else:
-                px, py = 0, 0
-
-            pt_dst = POINT(px, py)
             pt_src = POINT(0, 0)
             sz = SIZE(w, h)
             blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+            # 位置已由 SetWindowPos 精确设置，pptDst 传 None 以避免跨进程 SetParent 坐标系歧义
             ok = self._u32.UpdateLayeredWindow(
                 self._bar_hwnd,
                 screen_dc,
-                ctypes.byref(pt_dst),
+                None,
                 ctypes.byref(sz),
                 mem_dc,
                 ctypes.byref(pt_src),
