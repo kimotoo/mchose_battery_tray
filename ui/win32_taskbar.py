@@ -137,10 +137,13 @@ TIMER_LAYOUT_ID = 1
 TIMER_BALLOON_CLEANUP_ID = 2
 TIMER_POST_ATTACH_REDRAW_ID = 3
 TIMER_DEVICECHANGE_ID = 4
+TIMER_FADE_IN_ID = 5
 LAYOUT_POLL_MS = 250
 SIBLING_RESCAN_INTERVAL_SEC = 2.5
 POST_ATTACH_REDRAW_MS = 150
 DEVICECHANGE_DEBOUNCE_MS = 250
+FADE_IN_INTERVAL_MS = 16
+FADE_IN_STEP = 32
 
 LRESULT = ctypes.c_ssize_t
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
@@ -576,9 +579,19 @@ def compute_win11_layout(
     is_horizontal = rc_tray.width >= rc_tray.height
     if screen_rect is not None:
         if is_horizontal:
-            if rc_tray.top >= screen_rect.bottom - 4 or rc_tray.bottom <= screen_rect.top + 4:
+            if (
+                rc_tray.top >= screen_rect.bottom - 4
+                or rc_tray.bottom <= screen_rect.top + 4
+                or rc_tray.bottom > screen_rect.bottom + 4
+                or rc_tray.top < screen_rect.top - 4
+            ):
                 return None
-        elif rc_tray.right <= screen_rect.left + 4 or rc_tray.left >= screen_rect.right - 4:
+        elif (
+            rc_tray.right <= screen_rect.left + 4
+            or rc_tray.left >= screen_rect.right - 4
+            or rc_tray.left < screen_rect.left - 4
+            or rc_tray.right > screen_rect.right + 4
+        ):
             return None
 
     siblings = sibling_widgets or []
@@ -1000,6 +1013,8 @@ class Win32TaskbarHost:
         self._cached_fallback_bmp: Optional[wintypes.HBITMAP] = None
         self._cached_size: Tuple[int, int] = (108, 40)
         self._current_dpi: int = 96
+        self._bar_alpha: int = 255
+        self._last_rendered_img: Optional[Image.Image] = None
 
         self._tray_active: bool = False
         self._tray_hicon: Optional[wintypes.HICON] = None
@@ -1136,11 +1151,12 @@ class Win32TaskbarHost:
             return
         self._u32.KillTimer(self._msg_hwnd, TIMER_LAYOUT_ID)
         self._u32.KillTimer(self._msg_hwnd, TIMER_POST_ATTACH_REDRAW_ID)
+        self._u32.KillTimer(self._msg_hwnd, TIMER_FADE_IN_ID)
 
     def _should_use_overlay_on_create(self) -> bool:
-        """创建常驻条窗口前预判是否需要原生 WS_EX_TOPMOST 悬浮层（仅当找不到任务栏时兜底启用）。"""
+        """创建常驻条窗口前预判是否需要原生 WS_EX_TOPMOST 悬浮层（Win11 XAML 任务栏或找不到任务栏时启用）。"""
         self._detect_taskbar_handles()
-        return not bool(self._h_tray)
+        return not bool(self._h_tray) or self._has_visible_win11_xaml_bridge(self._h_tray)
 
     def _ensure_bar_and_sync(self, schedule_post_redraw: bool) -> None:
         self._destroy_bar_window()
@@ -1183,6 +1199,8 @@ class Win32TaskbarHost:
         self._last_colorkey_light = None
         self._cached_taskbar_bg = None
         self._cached_taskbar_bg_light = None
+        self._bar_alpha = 255
+        self._last_rendered_img = None
         self._bar_hidden_by_cover = False
         return True
 
@@ -1216,6 +1234,8 @@ class Win32TaskbarHost:
         self._last_colorkey_light = None
         self._cached_taskbar_bg = None
         self._cached_taskbar_bg_light = None
+        self._bar_alpha = 255
+        self._last_rendered_img = None
 
     def _create_tooltip(self) -> None:
         if not self._bar_hwnd:
@@ -1436,12 +1456,15 @@ class Win32TaskbarHost:
         self._modified_mstask = False
         self._empty_classic_sibling_polls = 0
 
-        # Win10 经典任务栏挂载为 ReBarWindow32 子级；Win11 现代 XAML 任务栏挂载为 Shell_TrayWnd 子级（与 TrafficMonitor 同构）
+        # Win10 经典任务栏挂载为 ReBarWindow32 子级；
+        # StartAllBack 等非 XAML 居中任务栏挂载为 Shell_TrayWnd 子级；
+        # Win11 现代 XAML 任务栏若跨进程 SetParent 到 Shell_TrayWnd 会被 DesktopWindowContentBridge 合成层遮挡，
+        # 因此走独立 WS_EX_TOPMOST + WS_EX_LAYERED 悬浮层。
         if is_classic and self._h_rebar:
             if self._embed_bar_in_parent(self._h_rebar):
                 self._win11_overlay = False
                 return
-        elif not is_classic and self._h_tray:
+        elif not is_classic and self._h_tray and not self._has_visible_win11_xaml_bridge(self._h_tray):
             if self._embed_bar_in_parent(self._h_tray):
                 self._win11_overlay = True
                 return
@@ -1976,6 +1999,9 @@ class Win32TaskbarHost:
             or (not self._embedded and self._is_fullscreen_covered(rc_tray))
         )
         if hidden:
+            if self._msg_hwnd:
+                self._u32.KillTimer(self._msg_hwnd, TIMER_FADE_IN_ID)
+            self._bar_alpha = 0
             if not self._bar_hidden_by_cover or self._u32.IsWindowVisible(self._bar_hwnd):
                 self._u32.ShowWindow(self._bar_hwnd, SW_HIDE)
                 self._bar_hidden_by_cover = True
@@ -2012,6 +2038,15 @@ class Win32TaskbarHost:
         self._current_dpi = dpi
         self._cached_size = (bar_rect.width, bar_rect.height)
 
+        started_fade_in = False
+        if was_hidden:
+            if not self._use_colorkey_fallback and self._msg_hwnd:
+                self._bar_alpha = 0
+                self.redraw()
+                started_fade_in = True
+            else:
+                self._bar_alpha = 255
+
         if pos_changed or need_zorder:
             if missing_topmost:
                 self._u32.SetWindowPos(
@@ -2047,6 +2082,8 @@ class Win32TaskbarHost:
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                 )
+        if started_fade_in and self._msg_hwnd:
+            self._u32.SetTimer(self._msg_hwnd, TIMER_FADE_IN_ID, FADE_IN_INTERVAL_MS, None)
         return size_changed or pos_changed
 
     def _restore_taskbar_layout(self) -> None:
@@ -2183,6 +2220,7 @@ class Win32TaskbarHost:
 
         if not self._use_colorkey_fallback:
             img = self._render_widget_fn(dpi, h, self._hovered, None)
+            self._last_rendered_img = img
             if self._present_ulw(img):
                 return
             # 某些环境跨进程 WS_CHILD 不支持 UpdateLayeredWindow 时自动切换到实体 WM_PAINT
@@ -2216,7 +2254,8 @@ class Win32TaskbarHost:
 
             pt_src = POINT(0, 0)
             sz = SIZE(w, h)
-            blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+            alpha = max(0, min(255, int(self._bar_alpha)))
+            blend = BLENDFUNCTION(AC_SRC_OVER, 0, alpha, AC_SRC_ALPHA)
             # 位置已由 SetWindowPos 精确设置，pptDst 传 None 以避免跨进程 SetParent 坐标系歧义
             ok = self._u32.UpdateLayeredWindow(
                 self._bar_hwnd,
@@ -2482,6 +2521,23 @@ class Win32TaskbarHost:
                 self._u32.KillTimer(hwnd, TIMER_DEVICECHANGE_ID)
                 if self._on_device_change is not None:
                     self._on_device_change()
+            elif wparam == TIMER_FADE_IN_ID:
+                if (
+                    self._display_mode != DisplayMode.TASKBAR_BAR
+                    or not self._bar_hwnd
+                    or self._bar_hidden_by_cover
+                    or self._use_colorkey_fallback
+                ):
+                    self._u32.KillTimer(hwnd, TIMER_FADE_IN_ID)
+                    self._bar_alpha = 255
+                else:
+                    self._bar_alpha = min(255, self._bar_alpha + FADE_IN_STEP)
+                    if self._last_rendered_img is not None:
+                        self._present_ulw(self._last_rendered_img)
+                    else:
+                        self.redraw()
+                    if self._bar_alpha >= 255:
+                        self._u32.KillTimer(hwnd, TIMER_FADE_IN_ID)
             return 0
         if msg == WM_DEVICECHANGE:
             if (

@@ -540,10 +540,14 @@ class TestManagerAndUi(unittest.TestCase):
         )
         self.assertEqual(rect_bad_notify, rect_no_notify)
 
-        # 4. 自动隐藏任务栏滑出屏幕时返回 None 隐藏悬浮条
+        # 4. 自动隐藏任务栏滑出屏幕或仍在滑入动画途中时返回 None 隐藏悬浮条
         hidden_tray = RectTuple(0, 1078, 1920, 1126)
         self.assertIsNone(
             compute_win11_layout(hidden_tray, notify, bar_w=110, bar_h=48, scale=1.0, screen_rect=screen)
+        )
+        sliding_tray = RectTuple(0, 1060, 1920, 1108)
+        self.assertIsNone(
+            compute_win11_layout(sliding_tray, notify, bar_w=110, bar_h=48, scale=1.0, screen_rect=screen)
         )
 
         # 5. 实机 2560x1440 Win10 + TrafficMonitor (2057..2215) 以及超宽 600px TM 均应平滑向左避让

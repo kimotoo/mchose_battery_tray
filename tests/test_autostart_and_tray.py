@@ -477,6 +477,25 @@ class TestAutostartAndTray(unittest.TestCase):
             self.assertFalse(host._embedded)
             self.assertIsNone(host._parent_hwnd)
 
+        # Win11 原生 XAML 任务栏（存在可见 DesktopWindowContentBridge）应走独立 TOPMOST 悬浮层，避免被 XAML 合成层遮挡
+        set_parent_xaml = []
+        with patch.object(host, "_detect_taskbar_handles", return_value=False), \
+                patch.object(host, "_has_visible_win11_xaml_bridge", return_value=True), \
+                patch.object(host._u32, "GetParent", return_value=0), \
+                patch.object(host._u32, "GetWindowLongPtrW", return_value=WS_POPUP), \
+                patch.object(host._u32, "SetWindowLongPtrW", return_value=0), \
+                patch.object(host._u32, "SetWindowPos", return_value=True), \
+                patch.object(host._u32, "SetParent", side_effect=lambda h, p: set_parent_xaml.append((h, p)) or 1):
+            host._h_tray = 103
+            host._bar_hwnd = 888
+            self.assertTrue(host._should_use_overlay_on_create())
+            host._attach_to_taskbar()
+            self.assertFalse(host._embedded)
+            self.assertTrue(host._win11_overlay)
+            self.assertFalse(host._use_colorkey_fallback)
+            self.assertIsNone(host._parent_hwnd)
+            self.assertEqual(set_parent_xaml, [])
+
         # 当未找到任务栏时，兜底创建原生带 WS_EX_TOPMOST 的悬浮条窗口
         host._h_tray = None
         with patch.object(host, "_detect_taskbar_handles", return_value=False):
