@@ -3,6 +3,7 @@
 
 import ctypes
 from datetime import datetime
+from pathlib import Path
 import threading
 from typing import Dict, List, Optional, Tuple
 
@@ -23,6 +24,7 @@ from core.models import (
 
 from .autostart import is_autostart_enabled, set_autostart
 from .notifier import LowBatteryNotifier
+from .settings import UserSettings, save_user_settings
 from .renderer import (
     measure_widget_by_style,
     render_tray_icon_by_style,
@@ -106,6 +108,7 @@ class TrayApplication:
         display_mode: DisplayMode = DisplayMode.TASKBAR_BAR,
         widget_style: WidgetStyle = WidgetStyle.DUAL_RING,
         taskbar_placement: TaskbarPlacement = TaskbarPlacement.LEFT_OF_SIBLINGS,
+        settings_path: Optional[Path] = None,
     ) -> None:
         self._manager = manager
         self._refresh_sec = refresh_sec
@@ -113,6 +116,7 @@ class TrayApplication:
         self._display_mode = display_mode
         self._widget_style = widget_style
         self._taskbar_placement = taskbar_placement
+        self._settings_path = settings_path
         self._notifier = LowBatteryNotifier()
 
         self._stop_event = threading.Event()
@@ -337,14 +341,31 @@ class TrayApplication:
     def _on_refresh_now(self) -> None:
         self._wake_event.set()
 
+    def _save_settings(self) -> None:
+        if self._settings_path is None:
+            return
+        save_user_settings(
+            UserSettings(
+                display_mode=self._display_mode,
+                widget_style=self._widget_style,
+                taskbar_placement=self._taskbar_placement,
+                refresh_sec=self._refresh_sec,
+            ),
+            path=self._settings_path,
+        )
+
     def _on_select_interval(self, seconds: int) -> None:
+        if self._refresh_sec == seconds:
+            return
         self._refresh_sec = seconds
+        self._save_settings()
         self._wake_event.set()
 
     def _on_select_display_mode(self, mode: DisplayMode) -> None:
         if self._display_mode == mode:
             return
         self._display_mode = mode
+        self._save_settings()
         try:
             self._host.set_display_mode(mode)
         except Exception:
@@ -354,6 +375,7 @@ class TrayApplication:
         if self._widget_style == style:
             return
         self._widget_style = style
+        self._save_settings()
         try:
             self._host.force_relayout_and_redraw()
         except Exception:
@@ -363,6 +385,7 @@ class TrayApplication:
         if self._taskbar_placement == placement:
             return
         self._taskbar_placement = placement
+        self._save_settings()
         try:
             self._host.set_taskbar_placement(placement)
         except Exception:

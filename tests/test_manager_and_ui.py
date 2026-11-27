@@ -20,6 +20,7 @@ from core.models import (
     TaskbarPlacement,
     TrayMenuAction,
     WidgetStyle,
+    quantize_battery_step10,
 )
 from drivers.virtual_keyboard import VirtualKeyboardDriver
 from ui.notifier import LowBatteryNotifier
@@ -577,6 +578,80 @@ class TestManagerAndUi(unittest.TestCase):
             ),
             RectTuple(1491, 1400, 1596, 1440),
         )
+
+    def test_unplugged_battery_upward_hysteresis_prevents_boundary_bounce(self):
+        def poll_raw(raw_pct, charging=False):
+            return DevicePollResult(
+                hardware_connected=True,
+                reading=BatteryReading(
+                    percent=quantize_battery_step10(raw_pct) if raw_pct is not None else None,
+                    charging=charging,
+                    online=True,
+                    model_name="G3 V2",
+                    connection_mode=ConnectionMode.WIRELESS_24G,
+                    raw_percent=raw_pct,
+                ),
+            )
+
+        script = [
+            poll_raw(64),                 # 1. 初始 64% -> 显示 60%
+            poll_raw(65),                 # 2. 小幅回升 +1% -> 抑制在 60%
+            poll_raw(66),                 # 3. 仍在 +2% -> 不允许爬坡，仍抑制在 60%
+            poll_raw(67),                 # 4. +3%（未超过 3%）-> 仍抑制在 60%
+            poll_raw(64),                 # 5. 回落到 64% -> 显示 60%
+            poll_raw(68),                 # 6. +4%（超过 3% 滞回）-> 升至 70%
+            poll_raw(64),                 # 7. 正常掉电至 64% -> 立即降回 60%
+            poll_raw(65),                 # 8. 再次小幅回弹 +1% -> 抑制在 60%
+            poll_raw(65, charging=True),  # 9. 插线充电 -> 立即允许升至 70%
+            poll_raw(64),                 # 10. 拔线掉到 64% -> 降回 60%
+            poll_raw(None, charging=True),  # 11. 纯充电哨兵（如 G3 0xFF）应清除未充电锚点
+            poll_raw(66),                 # 12. 充后拔线读到 66% -> 允许升至 70%
+        ]
+        mgr = DeviceManager(enumerate_fn=lambda: [], upward_hysteresis_percent=3)
+        mgr.register_driver(MockMouseDriver(script))
+
+        expected = [60, 60, 60, 60, 60, 70, 60, 60, 70, 60, 60, 70]
+        actual = [mgr.refresh_all()[DeviceSlot.MOUSE].percent for _ in expected]
+        self.assertEqual(actual, expected)
+
+    def test_low_battery_notifier_does_not_retrigger_on_14_15_bounce(self):
+        def poll_raw(raw_pct, charging=False):
+            return DevicePollResult(
+                hardware_connected=True,
+                reading=BatteryReading(
+                    percent=quantize_battery_step10(raw_pct),
+                    charging=charging,
+                    online=True,
+                    model_name="G3 V2",
+                    connection_mode=ConnectionMode.WIRELESS_24G,
+                    raw_percent=raw_pct,
+                ),
+            )
+
+        mgr = DeviceManager(enumerate_fn=lambda: [], upward_hysteresis_percent=3)
+        mgr.register_driver(
+            MockMouseDriver(
+                [
+                    poll_raw(14),
+                    poll_raw(15),
+                    poll_raw(14),
+                    poll_raw(16),
+                    poll_raw(14),
+                    poll_raw(18),
+                    poll_raw(14),
+                ]
+            )
+        )
+        notifier = LowBatteryNotifier(notify_threshold=10, reset_threshold=15)
+
+        alerts = [notifier.evaluate(mgr.refresh_all()[DeviceSlot.MOUSE]) for _ in range(7)]
+        self.assertIsNotNone(alerts[0])
+        self.assertIsNone(alerts[1])
+        self.assertIsNone(alerts[2])
+        self.assertIsNone(alerts[3])
+        self.assertIsNone(alerts[4])
+        self.assertIsNone(alerts[5])
+        self.assertIsNotNone(alerts[6])
 
 
 if __name__ == "__main__":

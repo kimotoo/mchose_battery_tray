@@ -25,6 +25,7 @@ WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
 WM_MOUSELEAVE = 0x02A3
+WM_CONTEXTMENU = 0x007B
 WM_SETTINGCHANGE = 0x001A
 WM_DPICHANGED = 0x02E0
 WM_DEVICECHANGE = 0x0219
@@ -91,6 +92,7 @@ AC_SRC_ALPHA = 0x01
 DIB_RGB_COLORS = 0
 BI_RGB = 0
 SRCCOPY = 0x00CC0020
+CLR_INVALID = 0xFFFFFFFF
 
 TME_LEAVE = 0x00000002
 IDC_ARROW = 32512
@@ -808,6 +810,8 @@ def _init_win32_apis():
     g32.BitBlt.restype = wintypes.BOOL
     g32.GetDeviceCaps.argtypes = [wintypes.HDC, ctypes.c_int]
     g32.GetDeviceCaps.restype = ctypes.c_int
+    g32.GetPixel.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    g32.GetPixel.restype = wintypes.COLORREF
 
     s32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
     s32.Shell_NotifyIconW.restype = wintypes.BOOL
@@ -988,6 +992,8 @@ class Win32TaskbarHost:
         self._hovered: bool = False
         self._use_colorkey_fallback: bool = False
         self._last_colorkey_light: Optional[bool] = None
+        self._cached_taskbar_bg: Optional[Tuple[int, int, int]] = None
+        self._cached_taskbar_bg_light: Optional[bool] = None
         self._last_theme_light: Optional[bool] = None
         self._dwm_attr_initialized: bool = False
         self._dwm_attr_fn = None
@@ -1175,6 +1181,8 @@ class Win32TaskbarHost:
         self._hovered = False
         self._use_colorkey_fallback = False
         self._last_colorkey_light = None
+        self._cached_taskbar_bg = None
+        self._cached_taskbar_bg_light = None
         self._bar_hidden_by_cover = False
         return True
 
@@ -1206,6 +1214,8 @@ class Win32TaskbarHost:
         self._hovered = False
         self._use_colorkey_fallback = False
         self._last_colorkey_light = None
+        self._cached_taskbar_bg = None
+        self._cached_taskbar_bg_light = None
 
     def _create_tooltip(self) -> None:
         if not self._bar_hwnd:
@@ -1406,8 +1416,10 @@ class Win32TaskbarHost:
         if prev_parent or err == 0:
             self._parent_hwnd = parent_hwnd
             self._embedded = True
-            # 跨进程 SetParent 到 explorer 任务栏容器时，直接走 LWA_COLORKEY + WM_PAINT 以确保 DWM 正常合成可见
+            # 跨进程 SetParent 到 explorer 任务栏容器时，移除 WS_EX_LAYERED 并走采样底色 + WM_PAINT：
+            # 既确保 DWM 正常合成可见，又避免 LWA_COLORKEY 透明区导致鼠标右键穿透到任务栏
             self._use_colorkey_fallback = True
+            self._set_bar_layered_style(False)
             return True
         return False
 
@@ -1440,6 +1452,8 @@ class Win32TaskbarHost:
         self._parent_hwnd = None
         self._embedded = False
         self._win11_overlay = True
+        self._use_colorkey_fallback = False
+        self._set_bar_layered_style(True)
         style = self._u32.GetWindowLongPtrW(self._bar_hwnd, GWL_STYLE)
         style = (style & ~WS_CHILD) | WS_POPUP
         self._u32.SetWindowLongPtrW(self._bar_hwnd, GWL_STYLE, style)
@@ -2072,11 +2086,98 @@ class Win32TaskbarHost:
         self._apply_mstask_rect(restored)
         self._modified_mstask = False
 
-    def redraw(self) -> None:
+    def _set_bar_layered_style(self, layered: bool) -> None:
+        """切换常驻条窗口的 WS_EX_LAYERED 属性，防止非层窗口/层窗口状态混用导致隐身。"""
+        if not self._bar_hwnd:
+            return
+        ex = self._u32.GetWindowLongPtrW(self._bar_hwnd, GWL_EXSTYLE)
+        has_layered = bool(ex & WS_EX_LAYERED)
+        if has_layered == layered:
+            return
+        new_ex = (ex | WS_EX_LAYERED) if layered else (ex & ~WS_EX_LAYERED)
+        self._u32.SetWindowLongPtrW(self._bar_hwnd, GWL_EXSTYLE, new_ex)
+        self._u32.SetWindowPos(
+            self._bar_hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+
+    def _sample_taskbar_bg(self, light: bool, resample: bool = True) -> Tuple[int, int, int]:
+        """在组件外侧紧邻任务栏边缘的安全区域多点采样底色，作为实体 WM_PAINT 背景。"""
+        default_bg = (238, 238, 238) if light else (16, 16, 16)
+        if self._cached_taskbar_bg_light != light:
+            self._cached_taskbar_bg = None
+            self._cached_taskbar_bg_light = light
+
+        if not resample and self._cached_taskbar_bg is not None:
+            return self._cached_taskbar_bg
+
+        rc_tray = self._get_window_rect(self._h_tray) if self._h_tray else None
+        rc_self = self._get_window_rect(self._bar_hwnd) if self._bar_hwnd else None
+        if (
+            rc_tray is None
+            or rc_self is None
+            or rc_tray.width <= 8
+            or rc_tray.height <= 8
+            or rc_self.width <= 0
+            or rc_self.height <= 0
+        ):
+            return self._cached_taskbar_bg or default_bg
+
+        is_horizontal = rc_tray.width >= rc_tray.height
+        candidates: List[Tuple[int, int]] = []
+        if is_horizontal:
+            xs = [rc_self.left - 3, rc_self.left - 10, rc_self.right + 3, rc_self.right + 10]
+            ys = [rc_tray.top + 3, rc_tray.bottom - 4, rc_tray.top + rc_tray.height // 2]
+        else:
+            xs = [rc_tray.left + 3, rc_tray.right - 4, rc_tray.left + rc_tray.width // 2]
+            ys = [rc_self.top - 3, rc_self.top - 10, rc_self.bottom + 3, rc_self.bottom + 10]
+
+        for x in xs:
+            for y in ys:
+                if not (rc_tray.left <= x < rc_tray.right and rc_tray.top <= y < rc_tray.bottom):
+                    continue
+                if rc_self.left <= x < rc_self.right and rc_self.top <= y < rc_self.bottom:
+                    continue
+                candidates.append((x, y))
+
+        if not candidates:
+            return self._cached_taskbar_bg or default_bg
+
+        screen_dc = self._u32.GetDC(None)
+        if not screen_dc:
+            return self._cached_taskbar_bg or default_bg
+
+        counts: Dict[Tuple[int, int, int], int] = {}
+        try:
+            for x, y in candidates:
+                px = int(self._g32.GetPixel(screen_dc, x, y))
+                if px == CLR_INVALID or px < 0:
+                    continue
+                rgb = (px & 0xFF, (px >> 8) & 0xFF, (px >> 16) & 0xFF)
+                luma = (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) // 1000
+                if (not light and luma >= 150) or (light and luma < 110):
+                    continue
+                counts[rgb] = counts.get(rgb, 0) + 1
+        finally:
+            self._u32.ReleaseDC(None, screen_dc)
+
+        if counts:
+            best_rgb = max(counts.items(), key=lambda item: item[1])[0]
+            self._cached_taskbar_bg = best_rgb
+            return best_rgb
+        return self._cached_taskbar_bg or default_bg
+
+    def redraw(self, resample_bg: bool = True) -> None:
         """渲染最新电量图标与文字并提交到常驻条窗口图层。"""
         if not self._bar_hwnd or self._bar_hidden_by_cover:
             return
-        self._last_theme_light = self._is_light_theme_fn()
+        light = self._is_light_theme_fn()
+        self._last_theme_light = light
         _w, h = self._cached_size
         dpi = self._current_dpi
 
@@ -2084,17 +2185,12 @@ class Win32TaskbarHost:
             img = self._render_widget_fn(dpi, h, self._hovered, None)
             if self._present_ulw(img):
                 return
-            # 某些环境跨进程 WS_CHILD 不支持 UpdateLayeredWindow 时自动切换到 LWA_COLORKEY
+            # 某些环境跨进程 WS_CHILD 不支持 UpdateLayeredWindow 时自动切换到实体 WM_PAINT
             self._use_colorkey_fallback = True
+            self._set_bar_layered_style(False)
 
-        light = self._is_light_theme_fn()
-        if self._last_colorkey_light != light:
-            key_rgb = (242, 242, 242) if light else (1, 1, 1)
-            colorkey_ref = key_rgb[0] | (key_rgb[1] << 8) | (key_rgb[2] << 16)
-            self._u32.SetLayeredWindowAttributes(self._bar_hwnd, colorkey_ref, 0, LWA_COLORKEY)
-            self._last_colorkey_light = light
-
-        fallback_bg = (242, 242, 242) if light else (1, 1, 1)
+        self._set_bar_layered_style(False)
+        fallback_bg = self._sample_taskbar_bg(light, resample=resample_bg)
         img = self._render_widget_fn(dpi, h, self._hovered, fallback_bg)
         screen_dc = self._u32.GetDC(None)
         try:
@@ -2352,17 +2448,17 @@ class Win32TaskbarHost:
                 self._hovered = True
                 tme = TRACKMOUSEEVENT(ctypes.sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0)
                 self._u32.TrackMouseEvent(ctypes.byref(tme))
-                self.redraw()
+                self.redraw(resample_bg=False)
             return 0
         if msg == WM_MOUSELEAVE:
             if self._hovered:
                 self._hovered = False
-                self.redraw()
+                self.redraw(resample_bg=False)
             return 0
         if msg == WM_LBUTTONDBLCLK:
             self._on_double_click()
             return 0
-        if msg == WM_RBUTTONUP:
+        if msg in (WM_RBUTTONUP, WM_CONTEXTMENU):
             self._show_context_menu()
             return 0
         return self._u32.DefWindowProcW(hwnd, msg, wparam, lparam)

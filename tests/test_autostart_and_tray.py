@@ -2,8 +2,10 @@
 """开机自启路径解析、Win32 任务栏结构体、模式与样式切换集成测试。"""
 
 import ctypes
+import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +28,7 @@ from core.models import (
 from drivers.virtual_keyboard import VirtualKeyboardDriver
 from ui import autostart
 from ui.renderer import render_tray_icon
+from ui.settings import UserSettings, load_user_settings, settings_path
 from ui.tray_app import TrayApplication
 from ui.win32_taskbar import (
     DBT_DEVICEARRIVAL,
@@ -664,6 +667,47 @@ class TestAutostartAndTray(unittest.TestCase):
             rects[101] = RectTuple(120, 2158, 3260, 2254)
             with patch.object(host, "_get_dpi_for_hwnd", return_value=192):
                 self.assertTrue(host._detect_taskbar_handles())
+
+    def test_user_settings_persistence_and_fallback(self):
+        with patch.dict(os.environ, {"APPDATA": r"C:\Users\tester\AppData\Roaming"}):
+            self.assertEqual(
+                settings_path(),
+                Path(r"C:\Users\tester\AppData\Roaming\mchose_battery_tray\settings.json"),
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = Path(tmpdir) / "mchose_battery_tray" / "settings.json"
+
+            # 文件不存在时返回默认配置
+            self.assertEqual(load_user_settings(cfg_file), UserSettings())
+
+            mgr = DeviceManager(enumerate_fn=lambda: [])
+            fake_host = _FakeTaskbarHost()
+            app = TrayApplication(manager=mgr, host=fake_host, settings_path=cfg_file)
+            app._on_select_display_mode(DisplayMode.TRAY_ICON_ONLY)
+            app._on_select_widget_style(WidgetStyle.MOUSE_CAPSULE)
+            app._on_select_taskbar_placement(TaskbarPlacement.RIGHT_OF_SIBLINGS)
+            app._on_select_interval(300)
+
+            self.assertTrue(cfg_file.exists())
+            reloaded = load_user_settings(cfg_file)
+            self.assertEqual(reloaded.display_mode, DisplayMode.TRAY_ICON_ONLY)
+            self.assertEqual(reloaded.widget_style, WidgetStyle.MOUSE_CAPSULE)
+            self.assertEqual(reloaded.taskbar_placement, TaskbarPlacement.RIGHT_OF_SIBLINGS)
+            self.assertEqual(reloaded.refresh_sec, 300)
+
+            # 非法字段值回退默认值，损坏 JSON 也安全回退
+            cfg_file.write_text(
+                '{"display_mode":"bad","widget_style":"mouse_capsule","refresh_sec":true}',
+                encoding="utf-8",
+            )
+            partial = load_user_settings(cfg_file)
+            self.assertEqual(partial.display_mode, DisplayMode.TASKBAR_BAR)
+            self.assertEqual(partial.widget_style, WidgetStyle.MOUSE_CAPSULE)
+            self.assertEqual(partial.refresh_sec, 60)
+
+            cfg_file.write_text("{broken json", encoding="utf-8")
+            self.assertEqual(load_user_settings(cfg_file), UserSettings())
 
 
 if __name__ == "__main__":

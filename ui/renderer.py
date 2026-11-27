@@ -117,8 +117,12 @@ def _make_widget_canvas(
 ) -> Image.Image:
     """创建带防点击穿透底板 (Alpha=1) 或悬停高亮的任务栏位图画布。"""
     if opaque_bg is not None:
-        bg_rgba = (opaque_bg[0], opaque_bg[1], opaque_bg[2], 255)
-    elif hovered:
+        canvas = Image.new("RGBA", (width, height), (opaque_bg[0], opaque_bg[1], opaque_bg[2], 255))
+        if hovered:
+            overlay_rgba = (0, 0, 0, 18) if light else (255, 255, 255, 18)
+            canvas.alpha_composite(Image.new("RGBA", (width, height), overlay_rgba))
+        return canvas
+    if hovered:
         bg_rgba = (0, 0, 0, 18) if light else (255, 255, 255, 18)
     else:
         bg_rgba = (255, 255, 255, 1) if light else (0, 0, 0, 1)

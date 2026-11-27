@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """驱动注册中心：集中管理已启用及后续预留扩展的设备驱动。"""
 
+from config import BATTERY_HYSTERESIS_PERCENT
 from core.manager import DeviceManager
 
 from .a5_compx import MchoseA5CompxDriver
@@ -31,7 +32,10 @@ def create_default_manager(enumerate_fn=None) -> DeviceManager:
     """
     from . import hid_transport
 
-    manager = DeviceManager(enumerate_fn=enumerate_fn or hid_transport.enumerate_devices)
+    manager = DeviceManager(
+        enumerate_fn=enumerate_fn or hid_transport.enumerate_devices,
+        upward_hysteresis_percent=BATTERY_HYSTERESIS_PERCENT,
+    )
     manager.register_driver(G3V2Driver())
     manager.register_driver(G3ClassicDriver())
     manager.register_driver(MchoseClassicDriver())

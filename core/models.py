@@ -111,6 +111,7 @@ class SlotState:
     percent: Optional[int] = None
     connection_mode: ConnectionMode = ConnectionMode.UNKNOWN
     is_virtual: bool = False
+    last_raw_percent: Optional[int] = None
 
 
 @dataclass

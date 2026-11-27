@@ -3,6 +3,7 @@
 
 from .autostart import is_autostart_enabled, set_autostart, shortcut_path
 from .notifier import LowBatteryNotifier
+from .settings import UserSettings, load_user_settings, save_user_settings, settings_path
 from .renderer import (
     format_device_bar_text,
     image_to_premultiplied_bgra,
@@ -30,6 +31,7 @@ __all__ = [
     "RectTuple",
     "TaskbarLayoutResult",
     "TrayApplication",
+    "UserSettings",
     "Win32TaskbarHost",
     "acquire_single_instance",
     "compute_win10_layout",
@@ -39,6 +41,7 @@ __all__ = [
     "image_to_premultiplied_bgra",
     "is_autostart_enabled",
     "is_light_taskbar",
+    "load_user_settings",
     "measure_taskbar_widget",
     "measure_widget_by_style",
     "render_mouse_capsule_icon",
@@ -48,6 +51,8 @@ __all__ = [
     "render_tray_icon_by_style",
     "render_widget_by_style",
     "resolve_arc_color",
+    "save_user_settings",
     "set_autostart",
+    "settings_path",
     "shortcut_path",
 ]

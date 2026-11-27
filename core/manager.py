@@ -4,7 +4,7 @@
 from typing import Any, Callable, Dict, List, Optional
 
 from .interfaces import BaseDeviceDriver, IMenuContributor
-from .models import ConnectionMode, DeviceSlot, SlotState, TrayMenuAction
+from .models import BatteryReading, ConnectionMode, DeviceSlot, SlotState, TrayMenuAction
 
 
 class DeviceManager:
@@ -13,8 +13,10 @@ class DeviceManager:
     def __init__(
         self,
         enumerate_fn: Callable[[], List[Dict[str, Any]]],
+        upward_hysteresis_percent: int = 3,
     ) -> None:
         self._enumerate_fn = enumerate_fn
+        self._upward_hysteresis_percent = max(0, int(upward_hysteresis_percent))
         self._drivers: Dict[DeviceSlot, List[BaseDeviceDriver]] = {
             DeviceSlot.MOUSE: [],
             DeviceSlot.KEYBOARD: [],
@@ -58,6 +60,40 @@ class DeviceManager:
 
         return self.get_all_states()
 
+    def _apply_battery_reading(self, state: SlotState, reading: BatteryReading) -> None:
+        """应用单次电量读数，并在未充电状态下抑制原始电量小幅回升引起的向上跳档。"""
+        new_percent = reading.percent
+        new_raw = reading.raw_percent
+
+        if reading.charging:
+            state.last_raw_percent = new_raw
+            if new_percent is not None:
+                state.percent = new_percent
+            return
+
+        if new_percent is None:
+            return
+
+        if (
+            state.is_virtual
+            or state.percent is None
+            or new_raw is None
+            or state.last_raw_percent is None
+            or self._upward_hysteresis_percent <= 0
+        ):
+            state.percent = new_percent
+            state.last_raw_percent = new_raw
+            return
+
+        if new_percent <= state.percent:
+            state.percent = new_percent
+            state.last_raw_percent = new_raw
+            return
+
+        if (new_raw - state.last_raw_percent) > self._upward_hysteresis_percent:
+            state.percent = new_percent
+            state.last_raw_percent = new_raw
+
     def _refresh_slot(
         self,
         slot: DeviceSlot,
@@ -88,8 +124,7 @@ class DeviceManager:
                 if reading.online:
                     state.online = True
                     state.charging = reading.charging
-                    if reading.percent is not None:
-                        state.percent = reading.percent
+                    self._apply_battery_reading(state, reading)
                 else:
                     # 硬件接收器仍在，但外设处于休眠或短暂通信失败：保留上次有效电量缓存
                     state.online = False
@@ -104,6 +139,7 @@ class DeviceManager:
         state.online = False
         state.charging = False
         state.percent = None
+        state.last_raw_percent = None
         state.connection_mode = ConnectionMode.UNKNOWN
         state.is_virtual = False
 

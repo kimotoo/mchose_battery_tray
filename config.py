@@ -17,6 +17,7 @@ MID_COLOR_THRESHOLD = 30     # <= 30% 变黄
 LOW_COLOR_THRESHOLD = 15     # <= 15% 变红
 LOW_NOTIFY_THRESHOLD = 10    # <= 10% 弹一次低电量通知
 NOTIFY_RESET_THRESHOLD = 15  # 未插线充电时，电量回升至 >= 15% 重置提醒锁（防临界抖动）
+BATTERY_HYSTERESIS_PERCENT = 3  # 未插线充电时，原始电量回升不超过该值不往上跳档
 
 # 轮询间隔配置（秒）
 DEFAULT_REFRESH_SEC = 60
